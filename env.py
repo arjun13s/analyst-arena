@@ -1,6 +1,7 @@
 """
 Analyst Arena - HUD environment for model-vs-model financial analyst debate.
 V1: Minimal, deterministic, demo-friendly.
+Uses hud init structure: env.py at root, Dockerfile.hud, hud dev --stdio.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from typing import Literal
 
 from hud import Environment
 
-from .data import (
+from data import (
     get_company_packet as _get_company_packet,
     get_earnings_packet as _get_earnings_packet,
     get_financials as _get_financials,
@@ -18,7 +19,7 @@ from .data import (
     get_recent_news as _get_recent_news,
     SUPPORTED_TICKERS,
 )
-from .rubrics import score_thesis, score_pm_decision
+from rubrics import score_thesis, score_pm_decision
 
 # --- In-memory state (V1) ---
 _state: dict = {

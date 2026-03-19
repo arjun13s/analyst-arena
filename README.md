@@ -17,16 +17,16 @@ uv pip install -e .
 
 ### 2. Run locally with HUD
 
-From the repo root (e.g. `analyst-arena/` or `analyst_arena/`):
+From the repo root:
 
 ```bash
-hud dev analyst_arena
+hud dev env:env
 ```
 
-With hot-reload while editing:
+Or with hot-reload:
 
 ```bash
-hud dev analyst_arena -w analyst_arena
+hud dev env:env -w env.py -w data.py -w rubrics.py
 ```
 
 This starts the MCP server at `http://localhost:8765/mcp`.
@@ -105,13 +105,11 @@ Base: 100 points across 7 categories (thesis quality, evidence grounding, financ
 ## File Structure
 
 ```
-analyst-arena/           # Repo root (or analyst_arena locally)
-├── analyst_arena/       # Python package (importable as analyst_arena)
-│   ├── __init__.py
-│   ├── env.py           # Environment, tools, scenarios
-│   ├── data.py          # Static mock data (NVDA)
-│   └── rubrics.py       # Scoring helper
-├── Dockerfile
+analyst-arena/           # Repo root (hud init style)
+├── env.py               # Environment, tools, scenarios
+├── data.py              # Static mock data (NVDA)
+├── rubrics.py           # Scoring helper
+├── Dockerfile.hud       # Container config (uses hud dev --stdio)
 ├── pyproject.toml
 └── README.md
 ```
