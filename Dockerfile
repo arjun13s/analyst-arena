@@ -3,10 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 COPY pyproject.toml .
-COPY __init__.py .
-COPY env.py .
-COPY data.py .
-COPY rubrics.py .
+COPY analyst_arena/ analyst_arena/
 
 RUN pip install --no-cache-dir -e .
 

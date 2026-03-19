@@ -17,16 +17,10 @@ uv pip install -e .
 
 ### 2. Run locally with HUD
 
-From the parent directory (or from `analyst_arena` if you're inside it):
+From the repo root (e.g. `analyst-arena/` or `analyst_arena/`):
 
 ```bash
 hud dev analyst_arena
-```
-
-Or from inside `analyst_arena`:
-
-```bash
-hud dev .
 ```
 
 With hot-reload while editing:
@@ -111,10 +105,13 @@ Base: 100 points across 7 categories (thesis quality, evidence grounding, financ
 ## File Structure
 
 ```
-analyst_arena/
-├── env.py       # Environment, tools, scenarios
-├── data.py      # Static mock data (NVDA)
-├── rubrics.py   # Scoring helper
+analyst-arena/           # Repo root (or analyst_arena locally)
+├── analyst_arena/       # Python package (importable as analyst_arena)
+│   ├── __init__.py
+│   ├── env.py           # Environment, tools, scenarios
+│   ├── data.py          # Static mock data (NVDA)
+│   └── rubrics.py       # Scoring helper
+├── Dockerfile
 ├── pyproject.toml
 └── README.md
 ```
