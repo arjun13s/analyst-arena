@@ -4,9 +4,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY pyproject.toml uv.lock* ./
-RUN pip install uv && uv sync --frozen --no-dev 2>/dev/null || uv sync --no-dev
 COPY . .
+RUN pip install uv && uv sync --frozen --no-dev 2>/dev/null || uv sync --no-dev
 
 # hud dev env:env --stdio (hud init style)
 CMD ["uv", "run", "python", "-m", "hud", "dev", "env:env", "--stdio"]
