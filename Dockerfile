@@ -7,6 +7,5 @@ COPY analyst_arena/ analyst_arena/
 
 RUN pip install --no-cache-dir -e .
 
-EXPOSE 8000
-
-CMD ["python", "-c", "from analyst_arena import env; env.serve(host='0.0.0.0', port=8000)"]
+# Stdio transport for HUD build analysis (docker run -i); platform uses HTTP when deployed
+CMD ["python", "-c", "from analyst_arena import env; env.serve(transport='stdio')"]
