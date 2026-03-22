@@ -1,92 +1,54 @@
 from __future__ import annotations
 
-from typing import Any
-
-from analyst_arena.agents.base import ScenarioResult
-from rubrics import ThesisScore, score_pm_decision, score_thesis
+from analyst_arena.models import AgentBacktestResult, MatchOutcome
 
 
-def evaluate_matchup(
-    scenario_name: str,
-    inputs: dict[str, Any],
-    agent_a_name: str,
-    agent_b_name: str,
-    result_a: ScenarioResult,
-    result_b: ScenarioResult,
-) -> dict[str, Any]:
-    thesis_score_a = score_thesis(
-        thesis_text=result_a.get("thesis_text", ""),
-        rebuttal_text=result_a.get("rebuttal_text"),
-    )
-    thesis_score_b = score_thesis(
-        thesis_text=result_b.get("thesis_text", ""),
-        rebuttal_text=result_b.get("rebuttal_text"),
-    )
+def compute_match_winner(
+    agent_a_result: AgentBacktestResult,
+    agent_b_result: AgentBacktestResult,
+) -> tuple[str, str, float, float, float, str]:
+    a_value = float(agent_a_result.final_portfolio_value)
+    b_value = float(agent_b_result.final_portfolio_value)
+    a_return = float(agent_a_result.total_return_pct)
+    b_return = float(agent_b_result.total_return_pct)
+    a_dd = float(agent_a_result.max_drawdown_pct)
+    b_dd = float(agent_b_result.max_drawdown_pct)
+    epsilon = 1e-6
 
-    score_a = float(thesis_score_a.total_score)
-    score_b = float(thesis_score_b.total_score)
-
-    winner = _pick_winner(
-        agent_a_name=agent_a_name,
-        agent_b_name=agent_b_name,
-        score_a=score_a,
-        score_b=score_b,
-    )
-    pm_decision = score_pm_decision(
-        thesis_a_text=result_a.get("thesis_text", ""),
-        thesis_b_text=result_b.get("thesis_text", ""),
-        winner=_winner_to_rating(winner, agent_a_name, agent_b_name),
-        rationale=_winner_rationale(winner, agent_a_name, agent_b_name, scenario_name, score_a, score_b),
-    )
-
-    return {
-        "scenario_name": scenario_name,
-        "inputs": inputs,
-        "score_a": score_a,
-        "score_b": score_b,
-        "winner": winner,
-        "thesis_score_a": thesis_score_a,
-        "thesis_score_b": thesis_score_b,
-        "pm_decision": pm_decision,
-    }
-
-
-def _pick_winner(
-    agent_a_name: str,
-    agent_b_name: str,
-    score_a: float,
-    score_b: float,
-) -> str:
-    if score_a > score_b:
-        return agent_a_name
-    if score_b > score_a:
-        return agent_b_name
-    return "tie"
-
-
-def _winner_to_rating(winner: str, agent_a_name: str, agent_b_name: str) -> str:
-    if winner == agent_a_name:
-        return "buy"
-    if winner == agent_b_name:
-        return "sell"
-    return "hold"
-
-
-def _winner_rationale(
-    winner: str,
-    agent_a_name: str,
-    agent_b_name: str,
-    scenario_name: str,
-    score_a: float,
-    score_b: float,
-) -> str:
-    if winner == "tie":
-        return (
-            f"{scenario_name}: both agents were evenly matched with scores "
-            f"{score_a:.1f} and {score_b:.1f}."
+    if abs(a_value - b_value) > epsilon:
+        winner, loser = (
+            (agent_a_result.agent.name, agent_b_result.agent.name)
+            if a_value > b_value
+            else (agent_b_result.agent.name, agent_a_result.agent.name)
         )
-    loser = agent_b_name if winner == agent_a_name else agent_a_name
-    return (
-        f"{scenario_name}: {winner} outperformed {loser} based on thesis quality, financial reasoning, "
-        f"and rebuttal effectiveness ({score_a:.1f} vs {score_b:.1f})."
+    elif abs(a_return - b_return) > epsilon:
+        winner, loser = (
+            (agent_a_result.agent.name, agent_b_result.agent.name)
+            if a_return > b_return
+            else (agent_b_result.agent.name, agent_a_result.agent.name)
+        )
+    elif abs(a_dd - b_dd) > epsilon:
+        winner, loser = (
+            (agent_a_result.agent.name, agent_b_result.agent.name)
+            if a_dd < b_dd
+            else (agent_b_result.agent.name, agent_a_result.agent.name)
+        )
+    else:
+        winner, loser = sorted([agent_a_result.agent.name, agent_b_result.agent.name])
+
+    if winner == agent_a_result.agent.name:
+        winner_value, loser_value = a_value, b_value
+    else:
+        winner_value, loser_value = b_value, a_value
+
+    return_diff_pct = ((winner_value / loser_value - 1.0) * 100.0) if loser_value else 0.0
+    explanation = (
+        f"Winner: {winner} finished at ${winner_value:,.2f} versus ${loser_value:,.2f} over the backtest window."
     )
+    return winner, loser, round(winner_value, 2), round(loser_value, 2), round(return_diff_pct, 3), explanation
+
+
+def outcome_for_agent(agent_name: str, winner_agent_name: str) -> MatchOutcome:
+    if not winner_agent_name:
+        return MatchOutcome.DRAW
+    return MatchOutcome.WIN if agent_name == winner_agent_name else MatchOutcome.LOSS

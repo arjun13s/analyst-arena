@@ -1,10 +1,12 @@
 [project]
 name = "analyst-arena"
 version = "0.1.0"
-description = "HUD environment for model-vs-model financial analyst debate (Analyst Arena)"
+description = "HUD environment for a model-vs-model backtest trading showdown (Analyst Arena)"
 requires-python = ">=3.11"
 dependencies = [
     "hud-python>=0.1.0",
+    "openai>=1.60.0",
+    "anthropic>=0.40.0",
     "streamlit>=1.55.0",
 ]
 
@@ -14,17 +16,28 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["analyst_arena"]
-include = ["env.py", "data.py", "rubrics.py", "run_tournament.py"]
+include = [
+    "env.py",
+    "data.py",
+    "rubrics.py",
+    "run_tournament.py",
+    "run_single_match.py",
+    "run_round_robin.py",
+    "streamlit_app.py",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/analyst_arena",
-    "/env.py",
-    "/data.py",
-    "/rubrics.py",
-    "/README.md",
-    "/Dockerfile.hud",
-    "/run_tournament.py",
+    "analyst_arena",
+    "env.py",
+    "data.py",
+    "rubrics.py",
+    "README.md",
+    "Dockerfile.hud",
+    "run_tournament.py",
+    "run_single_match.py",
+    "run_round_robin.py",
+    "streamlit_app.py",
 ]
 
 [tool.hud]

@@ -25,3 +25,8 @@ build/
 # App output
 results.json
 temp_results.json
+leaderboard.json
+match_results.json
+temp_match_results.json
+temp_leaderboard.json
+streamlit.log

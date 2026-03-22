@@ -1,154 +1,431 @@
 """
-Static mock data for Analyst Arena V1.
-Single ticker: NVDA.
+Deterministic historical market data for Analyst Arena backtest showdown.
+
+This module intentionally serves self-contained data to make no-lookahead
+simulation deterministic and reproducible across environments.
 """
 
-NVDA_PACKET = {
-    "ticker": "NVDA",
-    "name": "NVIDIA Corporation",
-    "overview": (
-        "NVIDIA designs and manufactures GPUs for gaming, professional visualization, "
-        "data center, and automotive markets. The company has pivoted heavily into AI "
-        "compute, with data center revenue now the dominant segment."
-    ),
-    "business_model": (
-        "Four segments: Data Center (~80% of revenue), Gaming (~15%), Professional "
-        "Visualization (~3%), Automotive (~2%). Data Center growth driven by AI training "
-        "and inference demand. Recurring software revenue via CUDA ecosystem and AI Enterprise."
-    ),
-    "key_metrics": {
-        "revenue_ttm": 60.9,  # $B
-        "revenue_growth_yoy": 0.22,
-        "gross_margin": 0.73,
-        "operating_margin": 0.55,
-        "net_margin": 0.49,
-        "fcf_ttm": 28.2,  # $B
-        "capex_ttm": 2.1,  # $B
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from math import cos, sin
+from typing import Any
+
+
+SUPPORTED_TICKERS = ("NVDA", "AAPL", "GOOGL")
+DEFAULT_BACKTEST_MONTHS = 3
+WINDOW_START = date(2025, 1, 2)
+WINDOW_END = date(2025, 3, 31)
+
+
+TickerParams = dict[str, float]
+
+
+_TICKER_CONFIG: dict[str, TickerParams] = {
+    "NVDA": {"start": 132.0, "drift": 0.0021, "vol": 0.028, "volume": 52_000_000, "seed": 1.7},
+    "AAPL": {"start": 198.0, "drift": 0.0009, "vol": 0.015, "volume": 71_000_000, "seed": 2.9},
+    "GOOGL": {"start": 165.0, "drift": 0.0012, "vol": 0.017, "volume": 36_000_000, "seed": 4.1},
+}
+
+
+_COMPANY_CONTEXT: dict[str, dict[str, Any]] = {
+    "NVDA": {
+        "name": "NVIDIA Corporation",
+        "company_overview": "GPU and accelerated computing leader with AI data-center concentration.",
+        "business_model": "High-margin silicon and software stack monetized through enterprise AI demand.",
+        "financial_context": {
+            "revenue_growth_yoy": 0.62,
+            "gross_margin": 0.73,
+            "fcf_margin": 0.46,
+        },
     },
-    "valuation_snapshot": {
-        "price": 142.50,
-        "market_cap": 3_520,  # $B
-        "ev": 3_480,
-        "pe_ttm": 72,
-        "ev_revenue": 57,
-        "ev_ebitda": 65,
-        "fcf_yield": 0.008,
+    "AAPL": {
+        "name": "Apple Inc.",
+        "company_overview": "Consumer hardware + services ecosystem with durable cash generation.",
+        "business_model": "Installed-base monetization through devices, subscriptions, and platform lock-in.",
+        "financial_context": {
+            "revenue_growth_yoy": 0.04,
+            "gross_margin": 0.45,
+            "fcf_margin": 0.28,
+        },
+    },
+    "GOOGL": {
+        "name": "Alphabet Inc.",
+        "company_overview": "Search/ads and cloud platform scaling with AI product integration.",
+        "business_model": "Ad monetization + cloud subscriptions with data and distribution advantages.",
+        "financial_context": {
+            "revenue_growth_yoy": 0.11,
+            "gross_margin": 0.58,
+            "fcf_margin": 0.27,
+        },
     },
 }
 
-NVDA_EARNINGS_PACKET = {
-    "ticker": "NVDA",
-    "period": "Q4 FY25",
-    "release_date": "2025-02-26",
-    "headline": "Record Data Center revenue; guidance above consensus",
-    "results": {
-        "revenue": 22.1,  # $B, +22% yoy
-        "data_center_revenue": 18.4,  # $B, +27% yoy
-        "gaming_revenue": 2.9,  # $B, flat yoy
-        "gross_margin": 0.76,  # up 180bp yoy
-        "operating_income": 14.8,  # $B
-        "eps_diluted": 0.82,  # +26% yoy
-    },
-    "guidance": {
-        "q1_fy26_revenue": "~$24.0B (midpoint)",
-        "fy26_revenue_growth": "low-to-mid twenties %",
-    },
-    "management_commentary": (
-        "Hopper demand remains strong; Blackwell ramp on track for Q2. "
-        "Operating leverage improving as software mix increases."
-    ),
+_STOCK_ARCHETYPE: dict[str, str] = {
+    "NVDA": "high_growth",
+    "AAPL": "mature_quality",
+    "GOOGL": "platform_growth",
 }
 
-NVDA_NEWS = [
-    {
-        "date": "2025-03-15",
-        "headline": "NVIDIA announces new AI chip partnership with major cloud provider",
-        "summary": "Multi-year supply agreement for Blackwell GPUs; terms not disclosed.",
-    },
-    {
-        "date": "2025-03-10",
-        "headline": "SEC filing: Insider selling by executives",
-        "summary": "Form 4 filings show routine 10b5-1 plan sales; no material change to ownership.",
-    },
-    {
-        "date": "2025-03-05",
-        "headline": "Data center demand normalization concerns from analyst note",
-        "summary": "One sell-side firm flags risk of order pull-forward and inventory build.",
-    },
-]
+_BASE_CANDIDATE_FACTORS: tuple[str, ...] = (
+    "momentum_5d",
+    "momentum_20d",
+    "volatility_20d",
+    "volume_trend_5d",
+    "revenue_growth_yoy",
+    "gross_margin",
+    "fcf_margin",
+    "event_risk",
+    "valuation_vs_growth",
+)
 
-NVDA_FINANCIALS = {
-    "income_statement": {
-        "revenue": 60.9,
-        "cogs": 16.4,
-        "gross_profit": 44.5,
-        "operating_expenses": 7.2,
-        "operating_income": 37.3,
-        "net_income": 29.8,
-        "eps_diluted": 1.21,
-    },
-    "balance_sheet": {
-        "cash": 31.2,
-        "total_assets": 77.1,
-        "total_debt": 9.7,
-        "shareholders_equity": 54.2,
-    },
-    "cash_flow": {
-        "operating_cf": 32.1,
-        "capex": -2.1,
-        "fcf": 30.0,
-        "buybacks": -15.2,
-    },
+
+_EVENTS: dict[str, list[dict[str, Any]]] = {
+    "NVDA": [
+        {"date": "2025-01-27", "type": "news", "headline": "AI demand checks remain strong across hyperscalers."},
+        {"date": "2025-02-26", "type": "earnings", "headline": "Revenue beat and guidance above consensus."},
+        {"date": "2025-03-17", "type": "news", "headline": "Supply-chain note flags near-term GPU allocation tightness."},
+    ],
+    "AAPL": [
+        {"date": "2025-01-30", "type": "news", "headline": "Services momentum offsets softer hardware mix."},
+        {"date": "2025-02-21", "type": "news", "headline": "Regulatory headline pressure on app distribution persists."},
+        {"date": "2025-03-12", "type": "news", "headline": "AI feature rollout cadence viewed as a catalyst."},
+    ],
+    "GOOGL": [
+        {"date": "2025-01-24", "type": "news", "headline": "Cloud contract wins support growth visibility."},
+        {"date": "2025-02-05", "type": "earnings", "headline": "Cloud margin expansion beats expectations."},
+        {"date": "2025-03-10", "type": "news", "headline": "Ad-tech regulatory updates create headline volatility."},
+    ],
 }
 
-NVDA_PRICE_CHART = {
-    "ticker": "NVDA",
-    "timeframe": "1Y",
-    "summary": (
-        "1Y: +180%. Strong uptrend with volatility. Key levels: support ~$120 (Aug 2024), "
-        "resistance ~$150. 50-day MA at $138. Volume elevated on earnings and product announcements."
-    ),
-    "high_52w": 150.20,
-    "low_52w": 68.50,
-    "current": 142.50,
+
+def _is_business_day(day: date) -> bool:
+    return day.weekday() < 5
+
+
+def _business_days(start: date, end: date) -> list[date]:
+    days: list[date] = []
+    cursor = start
+    while cursor <= end:
+        if _is_business_day(cursor):
+            days.append(cursor)
+        cursor += timedelta(days=1)
+    return days
+
+
+def _safe_round(value: float, places: int = 2) -> float:
+    return round(float(value), places)
+
+
+def _generate_price_history(ticker: str) -> list[dict[str, Any]]:
+    config = _TICKER_CONFIG[ticker]
+    days = _business_days(WINDOW_START, WINDOW_END)
+    candles: list[dict[str, Any]] = []
+    prev_close = config["start"]
+
+    for index, day in enumerate(days):
+        cycle = index / 6.0
+        trend = config["drift"] * (1 + 0.25 * sin(cycle * 0.8 + config["seed"]))
+        noise = config["vol"] * sin(cycle + config["seed"]) * 0.35
+        open_px = prev_close * (1.0 + config["vol"] * 0.08 * cos(cycle * 0.7 + config["seed"]))
+        close_px = open_px * (1.0 + trend + noise)
+        intraday_range = abs(config["vol"] * (0.55 + 0.25 * cos(cycle + config["seed"])))
+        high_px = max(open_px, close_px) * (1.0 + intraday_range)
+        low_px = min(open_px, close_px) * (1.0 - intraday_range)
+        volume_mult = 1.0 + 0.25 * sin(cycle * 1.4 + config["seed"])
+        volume = int(config["volume"] * max(0.45, volume_mult))
+
+        candle = {
+            "date": day.isoformat(),
+            "open": _safe_round(open_px),
+            "high": _safe_round(high_px),
+            "low": _safe_round(low_px),
+            "close": _safe_round(close_px),
+            "volume": volume,
+        }
+        candles.append(candle)
+        prev_close = close_px
+
+    return candles
+
+
+_PRICE_HISTORY: dict[str, list[dict[str, Any]]] = {
+    ticker: _generate_price_history(ticker) for ticker in SUPPORTED_TICKERS
 }
 
-# Supported ticker for V1
-SUPPORTED_TICKERS = ["NVDA"]
+
+def _find_index_for_date(history: list[dict[str, Any]], as_of_date: date) -> int:
+    idx = -1
+    for i, row in enumerate(history):
+        row_date = date.fromisoformat(str(row["date"]))
+        if row_date <= as_of_date:
+            idx = i
+        else:
+            break
+    return idx
 
 
-def get_company_packet(ticker: str) -> dict | None:
-    """Return company packet for ticker. V1: NVDA only."""
-    if ticker.upper() != "NVDA":
-        return None
-    return NVDA_PACKET.copy()
+def _compute_summary_stats(history: list[dict[str, Any]]) -> dict[str, float]:
+    if not history:
+        return {
+            "last_close": 0.0,
+            "avg_volume_5d": 0.0,
+            "return_5d_pct": 0.0,
+            "return_20d_pct": 0.0,
+            "volatility_20d_pct": 0.0,
+        }
+
+    closes = [float(item["close"]) for item in history]
+    volumes = [float(item["volume"]) for item in history]
+    last_close = closes[-1]
+
+    def _pct_change(period: int) -> float:
+        if len(closes) <= period:
+            return 0.0
+        base = closes[-(period + 1)]
+        if base == 0:
+            return 0.0
+        return ((closes[-1] / base) - 1.0) * 100.0
+
+    def _avg(values: list[float]) -> float:
+        return sum(values) / len(values) if values else 0.0
+
+    returns_20d = []
+    for i in range(max(1, len(closes) - 20), len(closes)):
+        prev = closes[i - 1]
+        returns_20d.append((closes[i] / prev - 1.0) * 100.0 if prev else 0.0)
+    avg_ret = _avg(returns_20d)
+    variance = _avg([(ret - avg_ret) ** 2 for ret in returns_20d]) if returns_20d else 0.0
+    volatility = variance ** 0.5
+
+    return {
+        "last_close": _safe_round(last_close, 4),
+        "avg_volume_5d": _safe_round(_avg(volumes[-5:]), 2),
+        "return_5d_pct": _safe_round(_pct_change(5), 3),
+        "return_20d_pct": _safe_round(_pct_change(20), 3),
+        "volatility_20d_pct": _safe_round(volatility, 3),
+    }
 
 
-def get_earnings_packet(ticker: str) -> dict | None:
-    """Return earnings packet for ticker. V1: NVDA only."""
-    if ticker.upper() != "NVDA":
-        return None
-    return NVDA_EARNINGS_PACKET.copy()
+def _filter_events(ticker: str, as_of_date: date, lookback_days: int = 45) -> list[dict[str, Any]]:
+    events = _EVENTS.get(ticker, [])
+    window_start = as_of_date - timedelta(days=lookback_days)
+    filtered: list[dict[str, Any]] = []
+    for event in events:
+        event_date = date.fromisoformat(str(event["date"]))
+        if window_start <= event_date <= as_of_date:
+            filtered.append(event)
+    return filtered
 
 
-def get_recent_news(ticker: str) -> list[dict]:
-    """Return recent news for ticker. V1: static mock."""
-    if ticker.upper() != "NVDA":
+def _normalize_ticker(ticker: str) -> str:
+    normalized = str(ticker).upper().strip()
+    if normalized not in SUPPORTED_TICKERS:
+        raise ValueError(f"Unsupported ticker '{ticker}'. Use one of: {', '.join(SUPPORTED_TICKERS)}")
+    return normalized
+
+
+def _coerce_date(value: str | date | datetime | None, default: date) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str) and value:
+        return date.fromisoformat(value)
+    return default
+
+
+def get_price_history(ticker: str) -> list[dict[str, Any]]:
+    normalized = _normalize_ticker(ticker)
+    return [dict(item) for item in _PRICE_HISTORY[normalized]]
+
+
+def load_backtest_window(
+    ticker: str,
+    months: int = DEFAULT_BACKTEST_MONTHS,
+) -> list[dict[str, Any]]:
+    _ = months
+    return get_price_history(ticker)
+
+
+def get_historical_info(
+    ticker: str,
+    as_of_date: str | date | datetime,
+    *,
+    lookback_days: int = 20,
+) -> dict[str, Any]:
+    normalized = _normalize_ticker(ticker)
+    history = _PRICE_HISTORY[normalized]
+    as_of = _coerce_date(as_of_date, default=WINDOW_END)
+    idx = _find_index_for_date(history, as_of)
+    if idx < 0:
+        raise ValueError(f"No historical data available for {normalized} on or before {as_of.isoformat()}")
+
+    visible = history[: idx + 1]
+    lookback = visible[-max(lookback_days, 1) :]
+    context = _COMPANY_CONTEXT[normalized]
+    stats = _compute_summary_stats(visible)
+
+    return {
+        "ticker": normalized,
+        "as_of_date": visible[-1]["date"],
+        "price_history": [dict(item) for item in lookback],
+        "summary_stats": stats,
+        "dated_events": _filter_events(normalized, date.fromisoformat(visible[-1]["date"])),
+        "financial_context": dict(context["financial_context"]),
+        "company_name": context["name"],
+        "company_overview": context["company_overview"],
+        "business_model": context["business_model"],
+        "market_regime": get_market_regime_label(normalized, visible[-1]["date"]),
+        "stock_archetype": get_stock_archetype(normalized),
+        "candidate_factors": list(_BASE_CANDIDATE_FACTORS),
+        "metadata": {
+            "lookback_days": lookback_days,
+            "visible_points": len(visible),
+            "window_start": WINDOW_START.isoformat(),
+            "window_end": WINDOW_END.isoformat(),
+        },
+    }
+
+
+def get_info(ticker: str) -> dict[str, Any]:
+    normalized = _normalize_ticker(ticker)
+    history = _PRICE_HISTORY[normalized]
+    latest = history[-1]
+    context = _COMPANY_CONTEXT[normalized]
+    return {
+        "ticker": normalized,
+        "company_name": context["name"],
+        "company_overview": context["company_overview"],
+        "business_model": context["business_model"],
+        "price_history": [dict(item) for item in history],
+        "summary_stats": _compute_summary_stats(history),
+        "financial_context": dict(context["financial_context"]),
+        "dated_events": list(_EVENTS.get(normalized, [])),
+        "valuation_snapshot": {"price": float(latest["close"])},
+        "stock_archetype": get_stock_archetype(normalized),
+        "candidate_factors": list(_BASE_CANDIDATE_FACTORS),
+        "metadata": {
+            "window_start": WINDOW_START.isoformat(),
+            "window_end": WINDOW_END.isoformat(),
+            "points": len(history),
+        },
+    }
+
+
+def get_company_packet(ticker: str) -> dict[str, Any]:
+    info = get_info(ticker)
+    return {
+        "ticker": info["ticker"],
+        "name": info["company_name"],
+        "overview": info["company_overview"],
+        "business_model": info["business_model"],
+    }
+
+
+def get_recent_news(ticker: str) -> list[dict[str, Any]]:
+    normalized = _normalize_ticker(ticker)
+    return [dict(item) for item in _EVENTS.get(normalized, [])]
+
+
+def get_financials(ticker: str, period: str = "TTM") -> dict[str, Any]:
+    _ = period
+    info = get_info(ticker)
+    return {
+        "ticker": info["ticker"],
+        "period": "TTM",
+        "context": info["financial_context"],
+    }
+
+
+def get_price_chart(ticker: str, timeframe: str = "3M") -> dict[str, Any]:
+    _ = timeframe
+    history = get_price_history(ticker)
+    closes = [float(item["close"]) for item in history]
+    return {
+        "ticker": _normalize_ticker(ticker),
+        "timeframe": "3M",
+        "summary": f"{len(history)} business-day candles from {history[0]['date']} to {history[-1]['date']}.",
+        "high": max(closes),
+        "low": min(closes),
+        "current": closes[-1],
+    }
+
+
+def get_earnings_packet(ticker: str) -> dict[str, Any]:
+    normalized = _normalize_ticker(ticker)
+    earnings_events = [event for event in _EVENTS.get(normalized, []) if event.get("type") == "earnings"]
+    latest = earnings_events[-1] if earnings_events else {"date": WINDOW_START.isoformat(), "headline": "No earnings event"}
+    return {
+        "ticker": normalized,
+        "release_date": latest["date"],
+        "headline": latest["headline"],
+        "results": dict(_COMPANY_CONTEXT[normalized]["financial_context"]),
+    }
+
+
+def get_stock_archetype(ticker: str) -> str:
+    normalized = _normalize_ticker(ticker)
+    return _STOCK_ARCHETYPE.get(normalized, "unknown")
+
+
+def get_candidate_factors(ticker: str) -> list[str]:
+    _ = _normalize_ticker(ticker)
+    return list(_BASE_CANDIDATE_FACTORS)
+
+
+def get_market_regime_label(ticker: str, as_of_date: str | date | datetime) -> str:
+    normalized = _normalize_ticker(ticker)
+    history = _PRICE_HISTORY[normalized]
+    as_of = _coerce_date(as_of_date, default=WINDOW_END)
+    idx = _find_index_for_date(history, as_of)
+    if idx < 0:
+        return "range_bound"
+    visible = history[: idx + 1]
+    stats = _compute_summary_stats(visible)
+    ret_20 = float(stats.get("return_20d_pct", 0.0))
+    vol_20 = float(stats.get("volatility_20d_pct", 0.0))
+    if vol_20 >= 2.0:
+        return "high_volatility"
+    if ret_20 >= 5.0:
+        return "risk_on_trend"
+    if ret_20 <= -5.0:
+        return "risk_off_drawdown"
+    return "range_bound"
+
+
+def get_forward_window(
+    ticker: str,
+    as_of_date: str | date | datetime,
+    horizon_days: int = 5,
+) -> list[dict[str, Any]]:
+    normalized = _normalize_ticker(ticker)
+    history = _PRICE_HISTORY[normalized]
+    as_of = _coerce_date(as_of_date, default=WINDOW_END)
+    idx = _find_index_for_date(history, as_of)
+    if idx < 0 or idx >= len(history) - 1:
         return []
-    return [n.copy() for n in NVDA_NEWS]
+    start = idx + 1
+    end = min(len(history), start + max(1, horizon_days))
+    return [dict(item) for item in history[start:end]]
 
 
-def get_financials(ticker: str, period: str = "TTM") -> dict | None:
-    """Return financials for ticker. V1: static mock, period ignored."""
-    if ticker.upper() != "NVDA":
-        return None
-    return {k: v.copy() for k, v in NVDA_FINANCIALS.items()}
-
-
-def get_price_chart(ticker: str, timeframe: str = "1Y") -> dict | None:
-    """Return chart summary for ticker. V1: text summary, not image."""
-    if ticker.upper() != "NVDA":
-        return None
-    out = NVDA_PRICE_CHART.copy()
-    out["timeframe"] = timeframe
-    return out
+def get_forward_return_pct(
+    ticker: str,
+    as_of_date: str | date | datetime,
+    horizon_days: int = 5,
+) -> float:
+    normalized = _normalize_ticker(ticker)
+    history = _PRICE_HISTORY[normalized]
+    as_of = _coerce_date(as_of_date, default=WINDOW_END)
+    idx = _find_index_for_date(history, as_of)
+    if idx < 0 or idx >= len(history) - 1:
+        return 0.0
+    forward_window = get_forward_window(normalized, as_of, horizon_days=horizon_days)
+    if not forward_window:
+        return 0.0
+    start_price = float(history[idx]["close"])
+    end_price = float(forward_window[-1]["close"])
+    if start_price == 0:
+        return 0.0
+    return round(((end_price / start_price) - 1.0) * 100.0, 4)

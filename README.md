@@ -1,115 +1,85 @@
 # Analyst Arena
 
-Model-vs-model financial analyst debate demo for HUD. Different models compete on the same stock; a judge scores who performed better.
+Analyst Arena is a model-vs-model **backtest trading showdown**. Two agents trade the same ticker over the same 3-month historical window with strict no-lookahead rules.
 
-**V1 scope:** Minimal, deterministic, demo-friendly. Single ticker (NVDA), static mock data.
+## Product Flow
+
+1. Pick ticker: `NVDA`, `AAPL`, or `GOOGL`
+2. Start simulation for two agents
+3. Each day:
+   - agent sees only data available up to that date
+   - agent returns `BUY` / `SELL` / `HOLD` with `size_pct`
+   - trade executes at next trading day open
+4. End of window:
+   - compare final portfolio values
+   - winner is objective (highest final value)
+5. Persist match + leaderboard
+
+## Core Rules
+
+- Starting cash: `$100,000`
+- Long-only, no leverage
+- Cannot buy beyond available cash
+- Cannot sell beyond held shares
+- Default transaction costs: `0 bps` (configurable in engine)
+- Execution rule: `next_open`
 
 ## Quick Start
 
-### 1. Install
-
 ```bash
 cd analyst_arena
-pip install -e .
-# or
 uv pip install -e .
 ```
 
-### 2. Run locally with HUD
-
-From the repo root:
+### Run single match
 
 ```bash
-hud dev env:env
+python run_single_match.py hud_model gpt4o --ticker NVDA --months 3 --starting-cash 100000
 ```
 
-Or with hot-reload:
+### Run round robin
 
 ```bash
-hud dev env:env -w env.py -w data.py -w rubrics.py
+python run_round_robin.py --agents hud_model gpt4o claude grok --tickers NVDA AAPL GOOGL
 ```
 
-This starts the MCP server at `http://localhost:8765/mcp`.
-
-### 3. Connect Cursor via MCP
-
-In Cursor → Settings → MCP, add:
-
-```json
-{
-  "mcpServers": {
-    "analyst-arena": {
-      "url": "http://localhost:8765/mcp"
-    }
-  }
-}
-```
-
-Restart Cursor or reload MCP. Your agent can now call the Analyst Arena tools.
-
-### 4. Deploy to HUD
-
-**Prerequisites:** Get an API key at [hud.ai/settings](https://hud.ai/settings), then:
+### Run demo UI
 
 ```bash
-hud set HUD_API_KEY=your-api-key
+streamlit run streamlit_app.py
 ```
 
-**Deploy from the `analyst_arena` directory:**
+## API Keys
 
-```bash
-cd analyst_arena
-hud deploy .
-```
+Set the keys for agents you want to run:
 
-This will:
-1. Package your project (respects `.dockerignore`)
-2. Build remotely on HUD's infrastructure
-3. Deploy to the platform
-4. Create `.hud/deploy.json` to link future rebuilds
+- `HUD_API_KEY` for `hud_model`
+- `OPENAI_API_KEY` for `gpt4o`
+- `ANTHROPIC_API_KEY` for `claude`
+- `XAI_API_KEY` for `grok`
 
-**Rebuild:** Run `hud deploy .` again; the version auto-increments (0.1.0 → 0.1.1).
+Optional model overrides:
 
-**GitHub auto-deploy (recommended for teams):**
-1. Push your repo to GitHub
-2. Go to [hud.ai](https://hud.ai) → New → Environment
-3. Connect the repo and install the HUD GitHub App
-4. Rebuilds run automatically on every push
+- `HUD_MODEL`
+- `OPENAI_MODEL`
+- `ANTHROPIC_MODEL`
+- `GROK_MODEL`
 
-## Tools
+## HUD Environment
 
-| Tool | Description |
-|------|-------------|
-| `get_company_packet(ticker)` | Overview, business model, key metrics, valuation |
-| `get_recent_news(ticker)` | Recent news and filings summary |
-| `get_financials(ticker, period)` | Income statement, balance sheet, cash flow |
-| `get_price_chart(ticker, timeframe)` | Chart summary (text) |
-| `get_earnings_packet(ticker)` | Latest earnings results and guidance |
-| `submit_thesis(ticker, stance, thesis_text)` | Store opening thesis |
-| `rebut_thesis(opponent_submission_id, rebuttal_text)` | Rebut opposing case |
-| `submit_final_rating(ticker, rating, target_price, rationale)` | Store final verdict |
+`env.py` exposes tools/scenarios for historical decision-making:
 
-## Scenarios
+- `get_historical_info(ticker, as_of_date)`
+- `reason_to_trade(...)`
+- `compute_portfolio_snapshot(...)`
+- scenario `trade_decision_step`
+- scenario `factor_weight_ranking`
+- scenario `post_trade_reflection`
+- scenario `historical_decision_step` (legacy compatibility)
+- scenario `summarize_decision`
+- scenario `backtest_showdown`
 
-| Scenario | Description |
-|----------|-------------|
-| `earnings_reaction` | Agent gets earnings packet, forms bull/bear thesis |
-| `analyst_debate` | Agent argues one side vs mock opponent, must rebut |
-| `thesis_revision` | Agent revises view after new news, submits final rating |
-| `pm_decision_round` | Judge evaluates two theses, picks winner |
+## Persistence
 
-## Scoring
-
-Base: 100 points across 7 categories (thesis quality, evidence grounding, financial reasoning, valuation rigor, risk recognition, rebuttal strength, calibration). Penalties for hallucination, inconsistency, genericness. V1 uses heuristic scoring; replace with LLM judge for production.
-
-## File Structure
-
-```
-analyst-arena/           # Repo root (hud init style)
-├── env.py               # Environment, tools, scenarios
-├── data.py              # Static mock data (NVDA)
-├── rubrics.py           # Scoring helper
-├── Dockerfile.hud       # Container config (uses hud dev --stdio)
-├── pyproject.toml
-└── README.md
-```
+- `match_results.json`: full match history
+- `leaderboard.json`: aggregate wins/losses and average performance

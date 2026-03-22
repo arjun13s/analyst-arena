@@ -4,70 +4,127 @@ import json
 from copy import deepcopy
 from typing import Any
 
-from data import (
-    get_company_packet,
-    get_earnings_packet,
-    get_financials,
-    get_price_chart,
-    get_recent_news,
-)
+from data import get_historical_info
+
+from analyst_arena.models import ScenarioName
 
 
-DEFAULT_SCENARIO_INPUTS: dict[str, dict[str, Any]] = {
-    "earnings_reaction": {"ticker": "NVDA"},
-    "analyst_debate": {"ticker": "NVDA"},
-    "thesis_revision": {"ticker": "NVDA"},
-    "pm_decision_round": {"ticker": "NVDA"},
+DEFAULT_BACKTEST_INPUTS: dict[str, Any] = {
+    "ticker": "NVDA",
+    "flow_name": "backtest_showdown",
 }
 
 
 def get_default_inputs(scenario_name: str) -> dict[str, Any]:
-    if scenario_name not in DEFAULT_SCENARIO_INPUTS:
+    supported = {item.value for item in ScenarioName}
+    if scenario_name not in supported:
         raise ValueError(f"Unsupported scenario: {scenario_name}")
-    return deepcopy(DEFAULT_SCENARIO_INPUTS[scenario_name])
+    return deepcopy(DEFAULT_BACKTEST_INPUTS)
 
 
-def build_prompt(scenario_name: str, inputs: dict[str, Any]) -> str:
+def build_prompt(scenario_name: str, inputs: dict[str, Any], agent_name: str | None = None) -> str:
     ticker = str(inputs.get("ticker", "NVDA")).upper()
-    packet = get_company_packet(ticker)
-    financials = get_financials(ticker, str(inputs.get("period", "TTM")))
-    news = get_recent_news(ticker)
-    price_chart = get_price_chart(ticker, str(inputs.get("timeframe", "1Y")))
-    earnings = get_earnings_packet(ticker)
+    as_of_date = str(inputs.get("as_of_date", ""))
+    portfolio_state = dict(inputs.get("portfolio_state", {}))
+    info_bundle = inputs.get("info_bundle")
+    if not isinstance(info_bundle, dict):
+        info_bundle = get_historical_info(ticker, as_of_date)
 
     scenario_brief = {
-        "earnings_reaction": (
-            "Produce an earnings reaction thesis using the earnings packet and supporting financial context."
+        ScenarioName.TRADE_DECISION_STEP.value: (
+            "Make a trading decision at this historical timestamp with calibrated confidence and size."
         ),
-        "analyst_debate": (
-            "Produce a debate thesis and a rebuttal against the strongest counterargument."
+        ScenarioName.FACTOR_WEIGHT_RANKING.value: (
+            "Rank candidate factors by relevance for this setup and assign normalized weights."
         ),
-        "thesis_revision": (
-            "Revise the investment thesis after new information and provide a final rating."
+        ScenarioName.POST_TRADE_REFLECTION.value: (
+            "Assess whether process quality was good after outcome reveal, without hindsight cheating."
         ),
-        "pm_decision_round": (
-            "Act as a PM-style analyst: provide a thesis, identify key risks, and give a final rating."
+        ScenarioName.HISTORICAL_DECISION_STEP.value: (
+            "Given only historical data up to as_of_date, choose BUY, SELL, or HOLD."
+        ),
+        ScenarioName.SUMMARIZE_DECISION.value: (
+            "Write a one-line summary of the action for demo playback."
+        ),
+        ScenarioName.BACKTEST_SHOWDOWN.value: (
+            "Summarize the final backtest result and winner rationale."
         ),
     }
     if scenario_name not in scenario_brief:
         raise ValueError(f"Unsupported scenario: {scenario_name}")
 
+    if scenario_name in {ScenarioName.TRADE_DECISION_STEP.value, ScenarioName.HISTORICAL_DECISION_STEP.value}:
+        keys = [
+            "action",
+            "size_pct",
+            "position_size",
+            "confidence",
+            "horizon",
+            "top_reasons",
+            "top_risks",
+            "invalidation_condition",
+            "factor_scores",
+            "rationale",
+            "metadata",
+        ]
+    elif scenario_name == ScenarioName.FACTOR_WEIGHT_RANKING.value:
+        keys = [
+            "ranked_factors",
+            "factor_weights",
+            "decisive_metrics",
+            "noisy_metrics",
+            "stock_archetype",
+            "market_regime",
+            "horizon",
+            "rationale",
+            "metadata",
+        ]
+    elif scenario_name == ScenarioName.POST_TRADE_REFLECTION.value:
+        keys = [
+            "decision_quality",
+            "process_quality",
+            "luck_vs_skill",
+            "confidence_assessment",
+            "size_assessment",
+            "signals_helped",
+            "signals_misled",
+            "next_time_changes",
+            "outcome_summary",
+            "hindsight_flags",
+            "metadata",
+        ]
+    elif scenario_name == ScenarioName.SUMMARIZE_DECISION.value:
+        keys = ["summary", "metadata"]
+    else:
+        keys = ["summary", "metadata"]
+
     payload = {
         "scenario": scenario_name,
-        "inputs": inputs,
-        "company_packet": packet,
-        "financials": financials,
-        "recent_news": news,
-        "price_chart": price_chart,
-        "earnings_packet": earnings,
+        "agent_name": agent_name,
+        "ticker": ticker,
+        "as_of_date": as_of_date,
+        "portfolio_state": portfolio_state,
+        "info_bundle": info_bundle,
+        "rules": {
+            "valid_actions": ["BUY", "SELL", "HOLD"],
+            "size_pct_range": [0.0, 1.0],
+            "no_leverage": True,
+            "long_only": True,
+            "no_lookahead": True,
+            "execution_rule": "next_open",
+        },
+        "candidate_factors": inputs.get("candidate_factors", info_bundle.get("candidate_factors", [])),
+        "stock_archetype": inputs.get("stock_archetype", info_bundle.get("stock_archetype", "")),
+        "market_regime": inputs.get("market_regime", info_bundle.get("market_regime", "")),
+        "future_outcome": inputs.get("future_outcome", {}),
+        "original_decision": inputs.get("original_decision", {}),
     }
 
     return (
-        "You are participating in Analyst Arena, a model-vs-model financial reasoning benchmark.\n"
+        "You are an agent in Analyst Arena Backtest Showdown.\n"
+        "Do not use future information.\n"
+        "Return valid JSON only.\n"
         f"Task: {scenario_brief[scenario_name]}\n"
-        "Use the provided market context and return only JSON with these keys:\n"
-        '["thesis_text", "stance", "rebuttal_text", "rating", "target_price", "rationale", "metadata"]\n'
-        'Valid stances: "bull" or "bear". Valid ratings: "buy", "hold", "sell".\n'
-        "The thesis must be specific, evidence-based, and grounded in the supplied data.\n"
+        f"Return JSON with keys: {json.dumps(keys)}\n"
         f"Context:\n{json.dumps(payload, indent=2)}"
     )
