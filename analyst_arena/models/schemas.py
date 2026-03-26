@@ -42,6 +42,21 @@ def _stringify(value: Any, default: str = "") -> str:
     return str(value).strip() or default
 
 
+def _coerce_str_list(value: Any) -> list[Any]:
+    """LLMs sometimes return a scalar for a list field (e.g. true, 0); never iterate that raw."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    return []
+
+
+def _coerce_mapping(value: Any) -> dict[Any, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _maybe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -176,7 +191,7 @@ class HistoricalInfoBundle(SerializableModel):
             financial_context=dict(payload.get("financial_context", {})),
             stock_archetype=_stringify(payload.get("stock_archetype"), "unknown"),
             market_regime=_stringify(payload.get("market_regime"), "neutral"),
-            candidate_factors=[_stringify(item) for item in payload.get("candidate_factors", []) if _stringify(item)],
+            candidate_factors=[_stringify(item) for item in _coerce_str_list(payload.get("candidate_factors")) if _stringify(item)],
             portfolio_context=dict(payload.get("portfolio_context", {})),
             metadata=dict(payload.get("metadata", {})),
         )
@@ -252,10 +267,10 @@ class ActionDecision(SerializableModel):
             horizon=_stringify(payload.get("horizon"), "short"),
             rationale=_stringify(payload.get("rationale")),
             confidence=max(0.0, min(1.0, _maybe_float(payload.get("confidence"), 0.0))),
-            top_reasons=[_stringify(item) for item in payload.get("top_reasons", []) if _stringify(item)],
-            top_risks=[_stringify(item) for item in payload.get("top_risks", []) if _stringify(item)],
+            top_reasons=[_stringify(item) for item in _coerce_str_list(payload.get("top_reasons")) if _stringify(item)],
+            top_risks=[_stringify(item) for item in _coerce_str_list(payload.get("top_risks")) if _stringify(item)],
             invalidation_condition=_stringify(payload.get("invalidation_condition")),
-            factor_scores={str(k): _maybe_float(v, 0.0) for k, v in dict(payload.get("factor_scores", {})).items()},
+            factor_scores={str(k): _maybe_float(v, 0.0) for k, v in _coerce_mapping(payload.get("factor_scores")).items()},
             metadata=dict(payload.get("metadata", {})),
         )
 
@@ -279,17 +294,17 @@ class FactorWeightRankingResult(SerializableModel):
         payload: dict[str, Any],
         default_as_of_date: date | None = None,
     ) -> FactorWeightRankingResult:
-        ranked = [_stringify(item) for item in payload.get("ranked_factors", []) if _stringify(item)]
+        ranked = [_stringify(item) for item in _coerce_str_list(payload.get("ranked_factors")) if _stringify(item)]
         weights = {
             str(k): max(0.0, _maybe_float(v, 0.0))
-            for k, v in dict(payload.get("factor_weights", {})).items()
+            for k, v in _coerce_mapping(payload.get("factor_weights")).items()
         }
         return cls(
             as_of_date=_parse_date(payload.get("as_of_date"), default_as_of_date),
             ranked_factors=ranked,
             factor_weights=weights,
-            decisive_metrics=[_stringify(item) for item in payload.get("decisive_metrics", []) if _stringify(item)],
-            noisy_metrics=[_stringify(item) for item in payload.get("noisy_metrics", []) if _stringify(item)],
+            decisive_metrics=[_stringify(item) for item in _coerce_str_list(payload.get("decisive_metrics")) if _stringify(item)],
+            noisy_metrics=[_stringify(item) for item in _coerce_str_list(payload.get("noisy_metrics")) if _stringify(item)],
             rationale=_stringify(payload.get("rationale")),
             horizon=_stringify(payload.get("horizon"), "short"),
             stock_archetype=_stringify(payload.get("stock_archetype"), "unknown"),
@@ -326,11 +341,11 @@ class PostTradeReflectionResult(SerializableModel):
             luck_vs_skill=_stringify(payload.get("luck_vs_skill"), "unknown"),
             confidence_assessment=_stringify(payload.get("confidence_assessment"), "unknown"),
             size_assessment=_stringify(payload.get("size_assessment"), "unknown"),
-            signals_helped=[_stringify(item) for item in payload.get("signals_helped", []) if _stringify(item)],
-            signals_misled=[_stringify(item) for item in payload.get("signals_misled", []) if _stringify(item)],
-            next_time_changes=[_stringify(item) for item in payload.get("next_time_changes", []) if _stringify(item)],
+            signals_helped=[_stringify(item) for item in _coerce_str_list(payload.get("signals_helped")) if _stringify(item)],
+            signals_misled=[_stringify(item) for item in _coerce_str_list(payload.get("signals_misled")) if _stringify(item)],
+            next_time_changes=[_stringify(item) for item in _coerce_str_list(payload.get("next_time_changes")) if _stringify(item)],
             outcome_summary=_stringify(payload.get("outcome_summary")),
-            hindsight_flags=[_stringify(item) for item in payload.get("hindsight_flags", []) if _stringify(item)],
+            hindsight_flags=[_stringify(item) for item in _coerce_str_list(payload.get("hindsight_flags")) if _stringify(item)],
             metadata=dict(payload.get("metadata", {})),
         )
 
@@ -347,7 +362,7 @@ class ScenarioEvaluation(SerializableModel):
         return cls(
             score=max(0.0, min(1.0, _maybe_float(payload.get("score"), 0.0))),
             components={str(k): max(0.0, min(1.0, _maybe_float(v, 0.0))) for k, v in dict(payload.get("components", {})).items()},
-            notes=[_stringify(item) for item in payload.get("notes", []) if _stringify(item)],
+            notes=[_stringify(item) for item in _coerce_str_list(payload.get("notes")) if _stringify(item)],
             metadata=dict(payload.get("metadata", {})),
         )
 

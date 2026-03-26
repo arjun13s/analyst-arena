@@ -1,0 +1,27 @@
+{
+  "version": "eval-v1",
+  "flow_name": "backtest_showdown",
+  "tickers": [
+    "NVDA",
+    "AAPL",
+    "GOOGL"
+  ],
+  "lookback_days": 20,
+  "stride": 3,
+  "files": {
+    "trade_decision_step": "task_sets\\eval\\v1\\trade_decision_step.jsonl",
+    "factor_weight_ranking": "task_sets\\eval\\v1\\factor_weight_ranking.jsonl",
+    "post_trade_reflection": "task_sets\\eval\\v1\\post_trade_reflection.jsonl"
+  },
+  "counts": {
+    "trade_decision_step": 198,
+    "factor_weight_ranking": 198,
+    "post_trade_reflection": 66,
+    "total": 462
+  },
+  "split_counts": {
+    "train": 294,
+    "val": 84,
+    "test": 84
+  }
+}

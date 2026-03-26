@@ -7,13 +7,16 @@ simulation deterministic and reproducible across environments.
 
 from __future__ import annotations
 
+import calendar
 from datetime import date, datetime, timedelta
 from math import cos, sin
 from typing import Any
 
 
 SUPPORTED_TICKERS = ("NVDA", "AAPL", "GOOGL")
-DEFAULT_BACKTEST_MONTHS = 3
+DEFAULT_BACKTEST_MONTHS = 1
+BACKTEST_STEPS = 10
+BACKTEST_POINTS = BACKTEST_STEPS + 1
 WINDOW_START = date(2025, 1, 2)
 WINDOW_END = date(2025, 3, 31)
 
@@ -75,7 +78,6 @@ _BASE_CANDIDATE_FACTORS: tuple[str, ...] = (
     "revenue_growth_yoy",
     "gross_margin",
     "fcf_margin",
-    "event_risk",
     "valuation_vs_growth",
 )
 
@@ -240,12 +242,49 @@ def get_price_history(ticker: str) -> list[dict[str, Any]]:
     return [dict(item) for item in _PRICE_HISTORY[normalized]]
 
 
+def _backtest_calendar_end_inclusive(start: date, months: int) -> date:
+    """Last calendar day of the last month in a span of `months` months starting at `start`'s month."""
+    months = max(1, int(months))
+    y, m = start.year, start.month + months - 1
+    while m > 12:
+        m -= 12
+        y += 1
+    while m < 1:
+        m += 12
+        y -= 1
+    last_d = calendar.monthrange(y, m)[1]
+    return date(y, m, last_d)
+
+
 def load_backtest_window(
     ticker: str,
     months: int = DEFAULT_BACKTEST_MONTHS,
 ) -> list[dict[str, Any]]:
-    _ = months
-    return get_price_history(ticker)
+    # Demo mode: fixed 10-step window (11 business-day points), chosen from a bullish segment.
+    _ = months  # months is ignored; we always replay a short, deterministic window.
+    history = get_price_history(ticker)
+    if len(history) < BACKTEST_POINTS:
+        raise ValueError(f"Not enough historical data for {ticker!r} for 10-step window.")
+
+    # Pick the best 11-point slice by (1) highest total return then (2) most up days.
+    best_start = 0
+    best_score = (-10_000.0, -1)
+    for start in range(0, len(history) - BACKTEST_POINTS + 1):
+        window = history[start : start + BACKTEST_POINTS]
+        first_close = float(window[0]["close"])
+        last_close = float(window[-1]["close"])
+        total_return = ((last_close / first_close) - 1.0) if first_close else -10_000.0
+        up_days = 0
+        for i in range(1, len(window)):
+            if float(window[i]["close"]) >= float(window[i - 1]["close"]):
+                up_days += 1
+        score = (total_return, up_days)
+        if score > best_score:
+            best_score = score
+            best_start = start
+
+    sliced = history[best_start : best_start + BACKTEST_POINTS]
+    return [dict(item) for item in sliced]
 
 
 def get_historical_info(
@@ -271,7 +310,8 @@ def get_historical_info(
         "as_of_date": visible[-1]["date"],
         "price_history": [dict(item) for item in lookback],
         "summary_stats": stats,
-        "dated_events": _filter_events(normalized, date.fromisoformat(visible[-1]["date"])),
+        # No news/events: keep decisions purely based on deterministic price + numeric context.
+        "dated_events": [],
         "financial_context": dict(context["financial_context"]),
         "company_name": context["name"],
         "company_overview": context["company_overview"],
@@ -301,7 +341,8 @@ def get_info(ticker: str) -> dict[str, Any]:
         "price_history": [dict(item) for item in history],
         "summary_stats": _compute_summary_stats(history),
         "financial_context": dict(context["financial_context"]),
-        "dated_events": list(_EVENTS.get(normalized, [])),
+        # No news/events: keep decisions purely based on deterministic price + numeric context.
+        "dated_events": [],
         "valuation_snapshot": {"price": float(latest["close"])},
         "stock_archetype": get_stock_archetype(normalized),
         "candidate_factors": list(_BASE_CANDIDATE_FACTORS),
@@ -324,8 +365,9 @@ def get_company_packet(ticker: str) -> dict[str, Any]:
 
 
 def get_recent_news(ticker: str) -> list[dict[str, Any]]:
-    normalized = _normalize_ticker(ticker)
-    return [dict(item) for item in _EVENTS.get(normalized, [])]
+    _ = ticker
+    # News/event data intentionally disabled for deterministic math-only decisions.
+    return []
 
 
 def get_financials(ticker: str, period: str = "TTM") -> dict[str, Any]:
@@ -338,13 +380,13 @@ def get_financials(ticker: str, period: str = "TTM") -> dict[str, Any]:
     }
 
 
-def get_price_chart(ticker: str, timeframe: str = "3M") -> dict[str, Any]:
+def get_price_chart(ticker: str, timeframe: str = "10D") -> dict[str, Any]:
     _ = timeframe
     history = get_price_history(ticker)
     closes = [float(item["close"]) for item in history]
     return {
         "ticker": _normalize_ticker(ticker),
-        "timeframe": "3M",
+        "timeframe": "10D",
         "summary": f"{len(history)} business-day candles from {history[0]['date']} to {history[-1]['date']}.",
         "high": max(closes),
         "low": min(closes),

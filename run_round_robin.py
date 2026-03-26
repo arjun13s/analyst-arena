@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 from typing import Sequence
 
 from analyst_arena.agents import build_default_agents
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-7s  %(name)s  %(message)s",
+    datefmt="%H:%M:%S",
+)
 from analyst_arena.engine import TournamentEngine
 
 from run_tournament import (
@@ -19,7 +26,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Analyst Arena round robin backtests.")
     parser.add_argument("--agents", nargs="*", default=DEFAULT_AGENT_NAMES)
     parser.add_argument("--tickers", nargs="*", default=["NVDA", "AAPL", "GOOGL"])
-    parser.add_argument("--months", type=int, default=3)
+    parser.add_argument("--months", type=int, default=1)
     parser.add_argument("--starting-cash", type=float, default=100000.0)
     parser.add_argument("--results-path", default=str(DEFAULT_RESULTS_PATH))
     parser.add_argument("--leaderboard-path", default=str(DEFAULT_LEADERBOARD_PATH))

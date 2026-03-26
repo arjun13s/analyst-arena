@@ -1,7 +1,34 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Callable, Protocol
+
+logger = logging.getLogger(__name__)
+
+
+def _chat_completion_message_text(message: Any) -> str:
+    """Normalize `choice.message.content` (str, or list of structured parts from some gateways)."""
+    if message is None:
+        return ""
+    content = getattr(message, "content", None)
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict):
+                if part.get("type") == "text" and part.get("text"):
+                    parts.append(str(part["text"]))
+                elif "text" in part:
+                    parts.append(str(part["text"]))
+            else:
+                text = getattr(part, "text", None)
+                parts.append(str(text) if text is not None else str(part))
+        return "\n".join(p for p in parts if p).strip()
+    return str(content).strip()
 
 
 class ScenarioProvider(Protocol):
@@ -69,6 +96,13 @@ class OpenAIProvider:
 
 
 class HUDInferenceProvider(OpenAIProvider):
+    """
+    HUD gateway models are often exposed on **chat** only (see `hud models` "Routes" column).
+    Base OpenAIProvider uses the Responses API (`/v1/responses`); many HUD models reject that with:
+    "not available on this endpoint". Default here is chat completions on the same base URL.
+    Set HUD_USE_RESPONSES_API=1 to force `responses.create` if a model supports it.
+    """
+
     def __init__(
         self,
         model: str,
@@ -94,12 +128,53 @@ class HUDInferenceProvider(OpenAIProvider):
         _ = (scenario_name, agent_name, inputs)
         if not self.api_key and not os.getenv("HUD_API_KEY"):
             raise ValueError("HUD_API_KEY is required for HUDInferenceProvider")
-        return super().complete(
-            prompt,
-            scenario_name=scenario_name,
-            agent_name=agent_name,
-            inputs=inputs,
+
+        use_responses = os.getenv("HUD_USE_RESPONSES_API", "").strip().lower() in {"1", "true", "yes"}
+        if use_responses:
+            return super().complete(
+                prompt,
+                scenario_name=scenario_name,
+                agent_name=agent_name,
+                inputs=inputs,
+            )
+
+        from openai import OpenAI
+
+        api_key = self.api_key or os.getenv("HUD_API_KEY")
+        client = OpenAI(
+            api_key=api_key,
+            base_url=self.base_url,
+            timeout=self.timeout,
         )
+        try:
+            _mt = int(os.getenv("HUD_CHAT_MAX_TOKENS", "2048"))
+        except ValueError:
+            _mt = 2048
+        try:
+            _temp = float(os.getenv("HUD_CHAT_TEMPERATURE", "0.2"))
+        except ValueError:
+            _temp = 0.2
+        create_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": _mt,
+            "temperature": _temp,
+        }
+        # OpenAI-compatible JSON mode; improves small models that drift into prose. Retry if gateway rejects it.
+        want_json = os.getenv("HUD_CHAT_JSON_OBJECT", "1").strip().lower() not in {"0", "false", "no", "off"}
+        if want_json:
+            create_kwargs["response_format"] = {"type": "json_object"}
+        try:
+            response = client.chat.completions.create(**create_kwargs)
+        except Exception as exc:
+            if want_json and "response_format" in create_kwargs:
+                logger.debug("HUD chat completions: json_object not accepted (%s), retrying without", exc)
+                del create_kwargs["response_format"]
+                response = client.chat.completions.create(**create_kwargs)
+            else:
+                raise
+        choice = response.choices[0].message if response.choices else None
+        return _chat_completion_message_text(choice)
 
 
 class XAIProvider(OpenAIProvider):

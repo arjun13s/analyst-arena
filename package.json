@@ -1,0 +1,9 @@
+{
+  "name": "analyst-arena-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:all": "powershell -ExecutionPolicy Bypass -File ./start_dev.ps1",
+    "stop:all": "powershell -ExecutionPolicy Bypass -File ./stop_dev.ps1"
+  }
+}

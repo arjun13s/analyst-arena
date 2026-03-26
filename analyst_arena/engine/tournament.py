@@ -35,7 +35,7 @@ class TournamentEngine:
         *,
         ticker: str | None = "NVDA",
         tickers: list[str] | None = None,
-        months: int = 3,
+        months: int = 1,
         starting_cash: float = 100000.0,
     ) -> list[MatchResult]:
         active_tickers = [item.upper() for item in (tickers or ([ticker] if ticker else []))]
@@ -60,7 +60,7 @@ class TournamentEngine:
         agent_b: Agent,
         *,
         ticker: str = "NVDA",
-        months: int = 3,
+        months: int = 1,
         starting_cash: float = 100000.0,
     ) -> MatchResult:
         result = self._match_engine.run_match(

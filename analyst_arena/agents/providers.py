@@ -98,7 +98,7 @@ def build_real_agents() -> dict[str, Agent]:
     grok_model = os.getenv("GROK_MODEL", "grok-3-mini")
     return {
         "hud_model": HUDModelAgent(name="hud_model", model=hud_model, display_name="HUD Agent"),
-        "gpt4o": OpenAIAgent(name="gpt4o", model=openai_model, display_name="GPT-4o"),
+        "gpt4o": OpenAIAgent(name="gpt4o", model=openai_model, display_name="ChatGPT"),
         "claude": AnthropicAgent(name="claude", model=anthropic_model, display_name="Claude"),
         "grok": GrokAgent(name="grok", model=grok_model, display_name="Grok"),
     }

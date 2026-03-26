@@ -7,7 +7,8 @@ dependencies = [
     "hud-python>=0.1.0",
     "openai>=1.60.0",
     "anthropic>=0.40.0",
-    "streamlit>=1.55.0",
+    "fastapi>=0.116.0",
+    "uvicorn>=0.35.0",
 ]
 
 [build-system]
@@ -20,10 +21,10 @@ include = [
     "env.py",
     "data.py",
     "rubrics.py",
+    "api_server.py",
     "run_tournament.py",
     "run_single_match.py",
     "run_round_robin.py",
-    "streamlit_app.py",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -34,10 +35,10 @@ include = [
     "rubrics.py",
     "README.md",
     "Dockerfile.hud",
+    "api_server.py",
     "run_tournament.py",
     "run_single_match.py",
     "run_round_robin.py",
-    "streamlit_app.py",
 ]
 
 [tool.hud]

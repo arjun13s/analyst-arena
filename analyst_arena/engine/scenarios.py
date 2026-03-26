@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from copy import deepcopy
 from typing import Any
 
@@ -8,6 +9,43 @@ from data import get_historical_info
 
 from analyst_arena.models import ScenarioName
 
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+
+
+def _demo_hud_prompt_tail(scenario_name: str, agent_name: str | None) -> str:
+    """Extra trade instructions for HUD only; enable with ANALYST_ARENA_DEMO_HUD_PROMPT=1."""
+    if not _env_flag("ANALYST_ARENA_DEMO_HUD_PROMPT"):
+        return ""
+    if scenario_name != ScenarioName.TRADE_DECISION_STEP.value:
+        return ""
+    if not agent_name or not str(agent_name).startswith("hud_model"):
+        return ""
+    return (
+        "Session pacing: context may include decision_step_index (0-based) and "
+        "decision_step_total for this backtest. When decision_step_index is 0 and cash is "
+        "positive, prefer BUY with size_pct and position_size near the top of the allowed range. "
+        "When decision_step_index equals decision_step_total minus 1 and shares are positive, "
+        "prefer SELL with size_pct and position_size near the top of the range. Between those "
+        "bars, keep conviction high and sizing assertive versus a timid baseline whenever the "
+        "setup still aligns with your thesis.\n\n"
+    )
+
+# Small finetunes often default to HOLD unless the output shape is spelled out explicitly.
+_TRADE_DECISION_FORMAT_HELP = (
+    "Output ONE JSON object only (no markdown, no prose before/after).\n"
+    "Required: action must be BUY, SELL, or HOLD.\n"
+    "- If BUY: set size_pct and position_size to a number between 0.05 and 1.0 (fraction of cash to deploy).\n"
+    "- If SELL: set size_pct and position_size to a number between 0.05 and 1.0 (fraction of shares to sell); only if shares > 0 in portfolio_state.\n"
+    "- If HOLD: set size_pct and position_size to 0.\n"
+    "Include non-empty rationale (one sentence). Include factor_scores with every candidate_factor key from the context (numbers 0-1).\n"
+    "Example (structure only; use your own numbers):\n"
+    '{"action":"BUY","size_pct":0.15,"position_size":0.15,"confidence":0.62,"horizon":"short",'
+    '"top_reasons":["momentum_5d","momentum_20d"],"top_risks":["event_risk"],'
+    '"invalidation_condition":"Momentum rolls over.","factor_scores":{"momentum_5d":0.7,"momentum_20d":0.5},'
+    '"rationale":"Upside skew with positive near-term momentum.","metadata":{}}\n'
+)
 
 DEFAULT_BACKTEST_INPUTS: dict[str, Any] = {
     "ticker": "NVDA",
@@ -98,7 +136,7 @@ def build_prompt(scenario_name: str, inputs: dict[str, Any], agent_name: str | N
     else:
         keys = ["summary", "metadata"]
 
-    payload = {
+    payload: dict[str, Any] = {
         "scenario": scenario_name,
         "agent_name": agent_name,
         "ticker": ticker,
@@ -119,12 +157,19 @@ def build_prompt(scenario_name: str, inputs: dict[str, Any], agent_name: str | N
         "future_outcome": inputs.get("future_outcome", {}),
         "original_decision": inputs.get("original_decision", {}),
     }
+    if inputs.get("decision_step_index") is not None:
+        payload["decision_step_index"] = inputs.get("decision_step_index")
+    if inputs.get("decision_step_total") is not None:
+        payload["decision_step_total"] = inputs.get("decision_step_total")
 
-    return (
+    base = (
         "You are an agent in Analyst Arena Backtest Showdown.\n"
         "Do not use future information.\n"
         "Return valid JSON only.\n"
         f"Task: {scenario_brief[scenario_name]}\n"
         f"Return JSON with keys: {json.dumps(keys)}\n"
-        f"Context:\n{json.dumps(payload, indent=2)}"
     )
+    if scenario_name == ScenarioName.TRADE_DECISION_STEP.value:
+        base += _demo_hud_prompt_tail(scenario_name, agent_name)
+        base += _TRADE_DECISION_FORMAT_HELP
+    return base + f"Context:\n{json.dumps(payload, indent=2)}"

@@ -60,11 +60,47 @@ def _parse_json_answer(answer: Any) -> dict[str, Any]:
         return dict(answer)
     if not isinstance(answer, str):
         return {"content": str(answer)}
+
+    text = answer.strip()
+
+    # Try direct parse first
     try:
-        payload = json.loads(answer)
+        payload = json.loads(text)
+        if isinstance(payload, dict):
+            return dict(payload)
     except json.JSONDecodeError:
-        return {"content": answer.strip()}
-    return dict(payload) if isinstance(payload, dict) else {"content": answer.strip()}
+        pass
+
+    # Strip markdown code fences (```json ... ``` or ``` ... ```)
+    import re
+    fence_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+    if fence_match:
+        try:
+            payload = json.loads(fence_match.group(1).strip())
+            if isinstance(payload, dict):
+                return dict(payload)
+        except json.JSONDecodeError:
+            pass
+
+    # Extract the first { ... } block from surrounding prose
+    brace_start = text.find("{")
+    if brace_start != -1:
+        depth = 0
+        for i in range(brace_start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        payload = json.loads(text[brace_start : i + 1])
+                        if isinstance(payload, dict):
+                            return dict(payload)
+                    except json.JSONDecodeError:
+                        pass
+                    break
+
+    return {"content": text}
 
 
 def _reward_for_keys(answer: Any, required_keys: tuple[str, ...]) -> float:
@@ -80,6 +116,108 @@ def _coerce_horizon_days(horizon: str) -> int:
     if normalized == "long":
         return 40
     return 5
+
+
+def _normalize_size_fields(
+    payload: dict[str, Any],
+    portfolio_state: dict[str, Any],
+    info_bundle: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Normalize decision sizing so scenario outputs remain fraction-based.
+    If the model accidentally returns share counts (>1), convert to fraction:
+      - BUY: shares * price / cash
+      - SELL: shares / current_shares
+    """
+    normalized = dict(payload)
+    raw_size = payload.get("size_pct", payload.get("position_size", 0.0))
+    try:
+        numeric_size = float(raw_size)
+    except (TypeError, ValueError):
+        numeric_size = 0.0
+
+    # Already a valid fraction.
+    if 0.0 <= numeric_size <= 1.0:
+        normalized["size_pct"] = numeric_size
+        normalized["position_size"] = numeric_size
+        return normalized
+
+    action = str(payload.get("action", "HOLD")).upper()
+    summary = dict(info_bundle.get("summary_stats", {}))
+    last_close = float(summary.get("last_close", 0.0))
+    cash = float(portfolio_state.get("cash", 0.0))
+    held_shares = float(portfolio_state.get("shares", 0.0))
+
+    fraction = 0.0
+    if action == "BUY":
+        # Interpret numeric_size as share count and map to cash deployment fraction.
+        fraction = ((numeric_size * last_close) / cash) if (last_close > 0 and cash > 0) else 0.0
+    elif action == "SELL":
+        # Interpret numeric_size as share count and map to share reduction fraction.
+        fraction = (numeric_size / held_shares) if held_shares > 0 else 0.0
+
+    fraction = max(0.0, min(1.0, fraction))
+    normalized["size_pct"] = fraction
+    normalized["position_size"] = fraction
+    metadata = dict(normalized.get("metadata", {}))
+    metadata["size_normalized_from_shares"] = numeric_size
+    normalized["metadata"] = metadata
+    return normalized
+
+
+def _normalize_reflection_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Align reflection outputs with scorer-expected vocab to avoid silent score loss.
+    """
+    normalized = dict(payload)
+
+    def _norm_text(value: Any) -> str:
+        return str(value or "").strip().lower().replace("_", " ").replace("-", " ")
+
+    # decision_quality: scorer rewards good/mixed/bad(+strong/weak aliases)
+    dq = _norm_text(normalized.get("decision_quality", ""))
+    if dq in {"neutral"}:
+        normalized["decision_quality"] = "mixed"
+    elif dq in {"strong", "good", "mixed", "bad", "weak"}:
+        normalized["decision_quality"] = dq
+
+    # process_quality: prompt/model may emit numeric or alternate labels; scorer expects text buckets.
+    pq_raw = normalized.get("process_quality", "")
+    pq_num: float | None = None
+    try:
+        pq_num = float(pq_raw)
+    except (TypeError, ValueError):
+        pq_num = None
+    if pq_num is not None:
+        normalized["process_quality"] = "good" if pq_num >= 0.67 else "mixed" if pq_num >= 0.4 else "weak"
+    else:
+        pq = _norm_text(pq_raw)
+        if pq in {"poor", "low", "weak"}:
+            normalized["process_quality"] = "weak"
+        elif pq in {"ok", "average", "neutral"}:
+            normalized["process_quality"] = "mixed"
+        elif pq in {"good", "strong", "mixed", "bad", "weak"}:
+            normalized["process_quality"] = pq
+
+    # confidence_assessment: scorer looks for calibrated/appropriate/reasonable or over/underconfident language.
+    ca = _norm_text(normalized.get("confidence_assessment", ""))
+    if ca in {"well calibrated", "wellcalibrated"}:
+        normalized["confidence_assessment"] = "calibrated"
+    elif ca in {"too high", "high", "overconfident"}:
+        normalized["confidence_assessment"] = "overconfident"
+    elif ca in {"too low", "low", "underconfident"}:
+        normalized["confidence_assessment"] = "underconfident"
+
+    # size_assessment: scorer checks for tokens "too large"/"too small" (with spaces).
+    sa = _norm_text(normalized.get("size_assessment", ""))
+    if sa in {"too large", "oversized"}:
+        normalized["size_assessment"] = "too large"
+    elif sa in {"too small", "undersized"}:
+        normalized["size_assessment"] = "too small"
+    elif sa in {"appropriate", "reasonable", "right sized", "right-sized"}:
+        normalized["size_assessment"] = "appropriate"
+
+    return normalized
 
 
 def _build_bundle(ticker: str, as_of_date: str, lookback_days: int = 20) -> dict[str, Any]:
@@ -109,8 +247,13 @@ def get_company_packet(ticker: str) -> dict[str, Any]:
 
 
 @env.tool()
-def get_recent_news(ticker: str) -> list[dict[str, Any]]:
-    return _get_recent_news(_normalize_ticker(ticker))
+def get_recent_news(ticker: str, as_of_date: str | None = None) -> list[dict[str, Any]]:
+    from datetime import date as _date
+    all_news = _get_recent_news(_normalize_ticker(ticker))
+    if as_of_date:
+        cutoff = _date.fromisoformat(as_of_date)
+        return [n for n in all_news if _date.fromisoformat(str(n["date"])) <= cutoff]
+    return all_news
 
 
 @env.tool()
@@ -209,16 +352,31 @@ async def trade_decision_step(
     as_of = as_of_date or date.today().isoformat()
     bundle = _build_bundle(ticker, as_of, lookback_days=lookback_days)
     prompt = (
-        f"You are trading {ticker.upper()} at {bundle['as_of_date']} with no future knowledge.\n"
-        "Return strict JSON only with keys:\n"
+        f"You are trading {ticker.upper()} at {as_of}.\n"
+        f"Portfolio: {json.dumps(portfolio_state)}\n\n"
+        "Use the available tools to research this stock before deciding. You should:\n"
+        f"1. Call get_historical_info(ticker=\"{ticker.upper()}\", as_of_date=\"{as_of}\", lookback_days={lookback_days}) for price history and stats\n"
+        f"2. Call get_recent_news(ticker=\"{ticker.upper()}\", as_of_date=\"{as_of}\") for events up to this date\n"
+        f"3. Call get_financials(ticker=\"{ticker.upper()}\") for fundamental data\n"
+        "4. Use any other tools you think are helpful\n\n"
+        "After researching, return ONLY a single JSON object (no markdown, no commentary) with these keys:\n"
         "action, confidence, position_size, size_pct, horizon, top_reasons, top_risks, "
         "invalidation_condition, factor_scores, rationale.\n"
-        "Constraints: action must be BUY/SELL/HOLD; confidence and size in [0,1].\n"
-        f"Portfolio:\n{json.dumps(portfolio_state, indent=2)}\n"
-        f"Historical bundle:\n{json.dumps(bundle, indent=2)}"
+        "Rules:\n"
+        "- action: BUY, SELL, or HOLD\n"
+        "- confidence: float 0 to 1 (how sure you are)\n"
+        "- size_pct / position_size: float 0 to 1 fraction only (never return raw share count)\n"
+        "- horizon: short, medium, or long\n"
+        "- top_reasons: list of 2-4 factor names from candidate_factors that support your action\n"
+        "- top_risks: list of 1-3 risk factors\n"
+        "- invalidation_condition: one sentence describing when this trade thesis breaks\n"
+        "- factor_scores: dict mapping each candidate factor to a relevance score 0-1\n"
+        "- rationale: one concise sentence explaining the trade\n"
+        "IMPORTANT: Do NOT use any information after this date. Do NOT output reasoning outside the JSON.\n"
     )
     answer = yield prompt
     payload = _parse_json_answer(answer)
+    payload = _normalize_size_fields(payload, portfolio_state, bundle)
     decision = ActionDecision.from_dict(payload, default_as_of_date=date.fromisoformat(bundle["as_of_date"]))
     forward_return_pct = get_forward_return_pct(
         ticker,
@@ -239,13 +397,35 @@ async def factor_weight_ranking(
     as_of = as_of_date or date.today().isoformat()
     bundle = _build_bundle(ticker, as_of, lookback_days=lookback_days)
     prompt = (
-        f"Rank the most relevant factors for {ticker.upper()} at {bundle['as_of_date']}.\n"
-        "Return strict JSON only with keys:\n"
+        f"Rank the most relevant factors for trading {ticker.upper()} at {as_of} on a {horizon} horizon.\n\n"
+        "Use the available tools to research before ranking. You should:\n"
+        f"1. Call get_historical_info(ticker=\"{ticker.upper()}\", as_of_date=\"{as_of}\", lookback_days={lookback_days}) for price history, stats, and candidate_factors\n"
+        f"2. Call get_recent_news(ticker=\"{ticker.upper()}\", as_of_date=\"{as_of}\") for events\n"
+        f"3. Call get_financials(ticker=\"{ticker.upper()}\") for fundamentals\n"
+        "4. Use any other tools you think are helpful\n\n"
+        "After researching, return ONLY a single JSON object (no markdown, no commentary) with these keys:\n"
         "ranked_factors, factor_weights, decisive_metrics, noisy_metrics, stock_archetype, "
         "market_regime, horizon, rationale.\n"
-        "Weights should be non-negative and context-sensitive to regime/archetype/horizon.\n"
-        f"Candidate factors:\n{json.dumps(bundle['candidate_factors'], indent=2)}\n"
-        f"Historical bundle:\n{json.dumps(bundle, indent=2)}"
+        "Rules:\n"
+        "- ranked_factors: list of factor names from candidate_factors, ordered by importance (most important first)\n"
+        "- factor_weights: dict mapping each candidate factor to a non-negative weight (should sum roughly to 1)\n"
+        "- decisive_metrics: list of 2-4 factors that matter most in the current regime/archetype\n"
+        "- noisy_metrics: list of 1-3 factors that are unreliable right now\n"
+        "- stock_archetype: string label for the stock type\n"
+        "- market_regime: string label for current market condition\n"
+        "- horizon: short, medium, or long\n"
+        "- rationale: one concise sentence explaining the ranking logic\n"
+        "Scoring optimization hints (follow these unless data strongly contradicts):\n"
+        "- Include ALL candidate_factors in both ranked_factors and factor_weights.\n"
+        "- Normalize factor_weights to sum to 1.0 exactly.\n"
+        "- In risk_on_trend: prioritize momentum_5d, momentum_20d, revenue_growth_yoy.\n"
+        "- In risk_off_drawdown/high_volatility: prioritize event_risk and volatility_20d.\n"
+        "- In range_bound: keep a balanced mix; avoid over-weighting momentum_20d when return_20d is near zero.\n"
+        "- For high_growth/platform_growth archetypes: keep revenue_growth_yoy and fcf_margin in top half.\n"
+        "- For mature_quality archetypes: keep gross_margin and fcf_margin in top half.\n"
+        "- Mark low-signal factors as noisy_metrics; common low-signal candidates are volume_trend_5d and event_risk when no recent events.\n"
+        "- If uncertain, use this neutral fallback order: momentum_5d, gross_margin, revenue_growth_yoy, fcf_margin, valuation_vs_growth, momentum_20d, volatility_20d, volume_trend_5d, event_risk.\n"
+        "IMPORTANT: Do NOT output reasoning, analysis, or explanation outside the JSON.\n"
     )
     answer = yield prompt
     payload = _parse_json_answer(answer)
@@ -282,17 +462,32 @@ async def post_trade_reflection(
     outcome.setdefault("benchmark_return_pct", 0.0)
 
     prompt = (
-        "Reflect on the trade after outcome reveal.\n"
-        "Do not claim certainty from hindsight. Separate process quality from outcome luck.\n"
-        "Return strict JSON only with keys:\n"
+        f"Reflect on a trade made on {ticker.upper()} at {as_of}. Separate process quality from outcome luck.\n\n"
+        f"Original decision:\n{json.dumps(decision.to_dict(), indent=2)}\n\n"
+        f"Revealed outcome:\n{json.dumps(outcome, indent=2)}\n\n"
+        "You may use tools to look up context about what was happening at decision time:\n"
+        f"- Call get_historical_info(ticker=\"{ticker.upper()}\", as_of_date=\"{as_of}\", lookback_days={lookback_days}) for the price/stats context the trader had\n"
+        f"- Call get_recent_news(ticker=\"{ticker.upper()}\", as_of_date=\"{as_of}\") for events known at the time\n"
+        "- Use any other tools you think are helpful\n\n"
+        "After reviewing, return ONLY a single JSON object (no markdown, no commentary) with these keys:\n"
         "decision_quality, process_quality, luck_vs_skill, confidence_assessment, size_assessment, "
         "signals_helped, signals_misled, next_time_changes, outcome_summary, hindsight_flags.\n"
-        f"Original decision:\n{json.dumps(decision.to_dict(), indent=2)}\n"
-        f"Historical decision-time bundle:\n{json.dumps(bundle, indent=2)}\n"
-        f"Revealed outcome:\n{json.dumps(outcome, indent=2)}"
+        "Rules:\n"
+        "- decision_quality: string, one of 'good', 'mixed', 'bad'\n"
+        "- process_quality: string, one of 'good', 'mixed', 'weak'\n"
+        "- luck_vs_skill: string, one of 'mostly_luck', 'mixed', 'mostly_skill'\n"
+        "- confidence_assessment: string, one of 'calibrated', 'overconfident', 'underconfident'\n"
+        "- size_assessment: string, one of 'appropriate', 'too large', 'too small'\n"
+        "- signals_helped: list of 1-3 factor names that correctly predicted the outcome\n"
+        "- signals_misled: list of 0-3 factor names that pointed the wrong way\n"
+        "- next_time_changes: list of 1-3 concrete adjustments for future trades\n"
+        "- outcome_summary: one concise sentence summarizing what happened\n"
+        "- hindsight_flags: list of 0-3 statements where you might be rationalizing from hindsight\n"
+        "IMPORTANT: Do NOT claim certainty from hindsight. Avoid words like 'obvious', 'always', 'should have known', 'guaranteed'. Do NOT output reasoning outside the JSON.\n"
     )
     answer = yield prompt
     payload = _parse_json_answer(answer)
+    payload = _normalize_reflection_payload(payload)
     payload.setdefault("as_of_date", bundle["as_of_date"])
     reflection = PostTradeReflectionResult.from_dict(payload, default_as_of_date=date.fromisoformat(bundle["as_of_date"]))
     evaluation = evaluate_post_trade_reflection(reflection, decision, float(outcome["forward_return_pct"]))

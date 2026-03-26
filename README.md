@@ -43,11 +43,65 @@ python run_single_match.py hud_model gpt4o --ticker NVDA --months 3 --starting-c
 python run_round_robin.py --agents hud_model gpt4o claude grok --tickers NVDA AAPL GOOGL
 ```
 
-### Run demo UI
+### Run API backend
 
 ```bash
-streamlit run streamlit_app.py
+uvicorn api_server:app --reload --host 0.0.0.0 --port 8000
 ```
+
+### Run Figma frontend
+
+Use the exported React app in `Frontend-figma` and point it to the API:
+
+```bash
+./start_dev.ps1
+```
+
+This opens two terminals and starts both backend and frontend.
+
+Or run from repo root with npm:
+
+```bash
+npm run dev:all
+```
+
+Stop both services:
+
+```bash
+./stop_dev.ps1
+```
+
+Or:
+
+```bash
+npm run stop:all
+```
+
+Manual mode:
+
+```bash
+cd "Frontend-figma"
+npm install
+npm run dev
+```
+
+Set API base URL if needed:
+
+```bash
+# PowerShell
+$env:VITE_API_BASE_URL="http://localhost:8000"
+npm run dev
+```
+
+The frontend calls:
+
+- `POST /api/match` for running HUD vs OpenAI simulation
+- `GET /api/leaderboard` for leaderboard views
+
+Default local URLs:
+
+- Backend: `http://localhost:8000`
+- Frontend: `http://localhost:4173`
 
 ## API Keys
 
@@ -83,3 +137,24 @@ Optional model overrides:
 
 - `match_results.json`: full match history
 - `leaderboard.json`: aggregate wins/losses and average performance
+
+## Eval Task Sets (Pre-Training)
+
+Generate scenario task sets for evaluation before training:
+
+```bash
+python scripts/generate_eval_task_sets.py
+```
+
+Outputs:
+
+- `task_sets/eval/v1/trade_decision_step.jsonl`
+- `task_sets/eval/v1/factor_weight_ranking.jsonl`
+- `task_sets/eval/v1/post_trade_reflection.jsonl`
+- `task_sets/eval/v1/manifest.json`
+
+You can control sampling density:
+
+```bash
+python scripts/generate_eval_task_sets.py --stride 2 --lookback-days 20
+```
