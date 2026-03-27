@@ -1,6 +1,6 @@
 # Analyst Arena
 
-Analyst Arena is a model-vs-model **backtest trading showdown**. Two agents trade the same ticker over the same 3-month historical window with strict no-lookahead rules.
+Analyst Arena is a model-vs-model **backtest trading showdown**. Two agents trade the same ticker over the same 3-month historical window with strict no-lookahead rules, 10 days to make the most amount of money.
 
 ## Product Flow
 
@@ -8,7 +8,7 @@ Analyst Arena is a model-vs-model **backtest trading showdown**. Two agents trad
 2. Start simulation for two agents
 3. Each day:
    - agent sees only data available up to that date
-   - agent returns `BUY` / `SELL` / `HOLD` with `size_pct`
+   - agent returns `BUY` / `SELL` / `HOLD` with `size_pct` -- % of portfolio
    - trade executes at next trading day open
 4. End of window:
    - compare final portfolio values
@@ -18,7 +18,7 @@ Analyst Arena is a model-vs-model **backtest trading showdown**. Two agents trad
 ## Core Rules
 
 - Starting cash: `$100,000`
-- Long-only, no leverage
+- Long-only, no leverage, or shorts
 - Cannot buy beyond available cash
 - Cannot sell beyond held shares
 - Default transaction costs: `0 bps` (configurable in engine)
@@ -111,6 +111,7 @@ Set the keys for agents you want to run:
 - `OPENAI_API_KEY` for `gpt4o`
 - `ANTHROPIC_API_KEY` for `claude`
 - `XAI_API_KEY` for `grok`
+  Currently only using GPT (only one I pay for)
 
 Optional model overrides:
 
@@ -129,9 +130,10 @@ Optional model overrides:
 - scenario `trade_decision_step`
 - scenario `factor_weight_ranking`
 - scenario `post_trade_reflection`
-- scenario `historical_decision_step` (legacy compatibility)
-- scenario `summarize_decision`
-- scenario `backtest_showdown`
+- scenario `historical_decision_step` (legacy compatibility) -
+- scenario `summarize_decision` (legacy compatbility) -
+- scenario `backtest_showdown`(legacy compatbility) -
+  All scenarios with '-' are no longer being used --> idea has been shifted.
 
 ## Persistence
 
